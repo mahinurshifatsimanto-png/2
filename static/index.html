@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Host</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f0f0f;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      color: #00e5ff;
+      margin-bottom: 24px;
+      border-bottom: 1px solid #1e1e1e;
+      padding-bottom: 12px;
+    }
+    .upload-box {
+      border: 2px dashed #333;
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 24px;
+    }
+    .upload-box:hover, .upload-box.dragover {
+      border-color: #00e5ff;
+      background: #111;
+    }
+    .upload-box input[type="file"] { display: none; }
+    .upload-box label {
+      cursor: pointer;
+      font-size: 1rem;
+      color: #888;
+    }
+    .upload-box label span { color: #00e5ff; }
+    #progress-wrap { display: none; margin-bottom: 16px; }
+    progress {
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      appearance: none;
+    }
+    progress::-webkit-progress-bar { background: #1e1e1e; border-radius: 4px; }
+    progress::-webkit-progress-value { background: #00e5ff; border-radius: 4px; }
+    #status { font-size: 0.85rem; color: #00e5ff; margin-top: 8px; min-height: 20px; }
+    .file-list { margin-top: 8px; }
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #141414;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      border: 1px solid #1e1e1e;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name {
+      font-size: 0.95rem;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .file-size { font-size: 0.75rem; color: #555; margin-top: 2px; }
+    .file-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .btn-dl, .btn-del {
+      padding: 6px 14px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-family: inherit;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-dl {
+      background: #00e5ff22;
+      color: #00e5ff;
+      border: 1px solid #00e5ff44;
+    }
+    .btn-dl:hover { background: #00e5ff33; }
+    .btn-del {
+      background: #ff144422;
+      color: #ff4444;
+      border: 1px solid #ff444444;
+    }
+    .btn-del:hover { background: #ff144433; }
+    .empty { color: #444; font-size: 0.9rem; padding: 16px 0; }
+    h2 { font-size: 1rem; color: #888; margin-bottom: 12px; letter-spacing: 1px; }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1a1a1a;
+      border: 1px solid #00e5ff44;
+      color: #00e5ff;
+      padding: 12px 20px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<h1>⬡ FILE HOST</h1>
+
+<div class="upload-box" id="drop-zone">
+  <input type="file" id="file-input" multiple>
+  <label for="file-input">
+    <div style="font-size:2rem;margin-bottom:8px;">📁</div>
+    <span>ফাইল সিলেক্ট করো</span> অথবা এখানে ড্র্যাগ করো<br>
+    <small style="color:#444;margin-top:8px;display:block;">APK, ZIP, PDF — যেকোনো ফাইল</small>
+  </label>
+</div>
+
+<div id="progress-wrap">
+  <progress id="progress-bar" value="0" max="100"></progress>
+  <div id="status"></div>
+</div>
+
+<h2>UPLOADED FILES</h2>
+<div class="file-list" id="file-list">
+  <div class="empty">লোড হচ্ছে...</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressBar = document.getElementById('progress-bar');
+  const statusEl = document.getElementById('status');
+  const fileListEl = document.getElementById('file-list');
+  const toastEl = document.getElementById('toast');
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 3000);
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  }
+
+  async function loadFiles() {
+    try {
+      const res = await fetch('/files');
+      const files = await res.json();
+      if (files.length === 0) {
+        fileListEl.innerHTML = '<div class="empty">কোনো ফাইল নেই।</div>';
+        return;
+      }
+      fileListEl.innerHTML = files.map(f => `
+        <div class="file-item" id="item-${btoa(f.name)}">
+          <div class="file-info">
+            <div class="file-name" title="${f.name}">${f.name}</div>
+            <div class="file-size">${formatSize(f.size)}</div>
+          </div>
+          <div class="file-actions">
+            <a class="btn-dl" href="${f.download_url}" download="${f.name}">⬇ Download</a>
+            <button class="btn-del" onclick="deleteFile('${f.name}')">✕ Delete</button>
+          </div>
+        </div>
+      `).join('');
+    } catch (e) {
+      fileListEl.innerHTML = '<div class="empty">লোড করতে সমস্যা হয়েছে।</div>';
+    }
+  }
+
+  async function uploadFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    progressWrap.style.display = 'block';
+    statusEl.textContent = `Uploading: ${file.name}`;
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload');
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          progressBar.value = pct;
+          statusEl.textContent = `Uploading ${file.name}: ${pct}%`;
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) resolve(JSON.parse(xhr.responseText));
+        else reject(new Error('Upload failed'));
+      };
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.send(formData);
+    });
+  }
+
+  async function handleFiles(files) {
+    for (const file of files) {
+      try {
+        await uploadFile(file);
+        showToast(`✓ ${file.name} uploaded`);
+      } catch (e) {
+        showToast(`✗ ${file.name} failed`);
+      }
+    }
+    progressWrap.style.display = 'none';
+    progressBar.value = 0;
+    statusEl.textContent = '';
+    loadFiles();
+  }
+
+  async function deleteFile(filename) {
+    if (!confirm(`"${filename}" মুছে ফেলবো?`)) return;
+    try {
+      const res = await fetch(`/delete/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast(`✓ ${filename} deleted`);
+        loadFiles();
+      }
+    } catch (e) {
+      showToast('Delete failed');
+    }
+  }
+
+  fileInput.addEventListener('change', () => handleFiles([...fileInput.files]));
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFiles([...e.dataTransfer.files]);
+  });
+
+  loadFiles();
+</script>
+</body>
+</html>
